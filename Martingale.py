@@ -152,26 +152,40 @@ class Martingale:
         #     if self.cofngi['CHECK_ENVELOPES_IND'] else 0
 
         # ADX 가 ADX_ALLOW_LEVEL보다 커야 거래
-        if self.config['CHECK_ADX_IND'] and adx < self.config['ADX_ALLOW_LEVEL']: return None
+        if self.config['CHECK_ADX_IND'] and adx < self.config['ADX_ALLOW_LEVEL']:
+            self.main.logging('■ checkOpen() : ADX - ' + adx)
+            return None
 
         if orderType == self.OP_BUY:
             # 종가가 LONG EMA 보다 크면 매수
-            if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] < maLongTrend: return None
+            if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] < maLongTrend:
+                self.main.logging('■ checkOpen() : LONG TREND - ' + maLongTrend)
+                return None
             # SHORT EMA 가 상승시 매수
-            if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr > maShortTrend: return None
+            if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr > maShortTrend:
+                self.main.logging('■ checkOpen() : SHORT TREND - ' + maShortTrend)
+                return None
             # RSI가 50 이하에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi > 50: return None
+            if self.config['CHECK_RSI_IND'] and rsi > 50:
+                self.main.logging('■ checkOpen() : RSI - ' + rsi)
+                return None
             # Envelopes Upper 이하에서 매수
             # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] > envlUpper): return None
 
             self.main.logging('■ checkOpen() : BUY ' + self.code)
         else:
             # 종가가 LONG EMA 보다 작으면 매도
-            if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] > maLongTrend: return None
+            if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] > maLongTrend:
+                self.main.logging('■ checkOpen() : LONG TREND - ' + maLongTrend)
+                return None
             # SHORT EMA 가 하락시 매도
-            if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr < maShortTrend: return None
+            if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr < maShortTrend:
+                self.main.logging('■ checkOpen() : SHORT TREND - ' + maShortTrend)
+                return None
             # RSI가 50 이상에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi < 50: return None
+            if self.config['CHECK_RSI_IND'] and rsi < 50:
+                self.main.logging('■ checkOpen() : RSI - ' + rsi)
+                return None
             # Envelopes Lower이상에서 매도
             # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] < envlLower): return None
 
