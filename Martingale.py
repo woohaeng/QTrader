@@ -30,26 +30,35 @@ class Martingale:
         # self.config = json.loads('{"SYMBOL": "NONE", "ORDER_LOTS": 0.03, "LOTS_MULTIPLE": 1.5, "MINIMUM_PROFIT": 2, ' \
         # profit : 2$ / 3 * 100 = 67$
         self.config = json.loads(
-            '{"SYMBOL": "NONE", "CODE": "NONE", "TIME_UNIT": 15, "ORDER_LOTS": 1, "LOTS_MULTIPLE": 2, "MINIMUM_PROFIT": 67, ' \
-            '"MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, "OTHER_TRAILING_STEP": 50, ' \
+            '{"MEMO": "CME", "SYMBOL": "NONE", "CODE": "NONE", "TIME_UNIT": 15, "ORDER_LOTS": 1, "LOTS_MULTIPLE": 2.0, '
+            '"MINIMUM_PROFIT": 67, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, "OTHER_TRAILING_STEP": 50, ' \
             '"LIMIT_MAX_DEGREE": 10, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30, ' \
             '"ALGORITHM_TYPE": "ALGO_DMI", "DMI_PERIOD": 12, "MACD_LONG_PERIOD": 26, ' \
             '"MACD_SHORT_PERIOD": 12, "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, ' \
             '"CHECK_ADX_IND": true, "CHECK_RSI_IND": true, "CHECK_LONG_EMA_IND": true, ' \
-            '"CHECK_SHORT_EMA_IND": true, "CHECK_ENVELOPES_IND": false, "ADX_ALLOW_LEVEL": 20, ' \
+            '"CHECK_SHORT_EMA_IND": true, "CHECK_ENVELOPES_IND": false, "ADX_ALLOW_LEVEL": 15, ' \
             '"LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3, "ENVELOPES_PERIOD": 200, ' \
             '"ENVELOPES_DEVIATION": 0.5}')
 
-        self.real_mode = False
+        self.real_mode = True
         self.magic_no = magic_no
         self.symbol = None
         self.code = None
         self.loadConfig(params)
         self.df_cur = pd.DataFrame()
         self.trade = MyTrade()
+        self.releaseDate = None
 
         self.close = 0
         self.lastOrderTime = None
+
+        self.debug_mode = False
+        self.signal_count = 0
+        self.pass_count = 0
+        self.adx_count = 0
+        self.rsi_count = 0
+        self.long_trend_count = 0
+        self.short_trend_count = 0
 
     def loadConfig(self, params):
         self.symbol = params['SYMBOL']
@@ -58,6 +67,8 @@ class Martingale:
         for key, value in params.items():
             if self.config.__contains__(key):
                 self.config[key] = self.convertValue(value, type(self.config[key]))
+            else:
+                self.config[key] = value
 
     def convertValue(self, value, value_type: str):
         if value in [None, 'None']:
@@ -70,7 +81,10 @@ class Martingale:
             elif value_type == int:
                 val = eval(value)
             elif value_type == float:
-                val = eval(value)
+                if type(value) == int:
+                    val = float(value)
+                else:
+                    val = eval(value)
             elif value_type == bool:
                 if isinstance(value, str):
                     val = eval(value)
@@ -110,21 +124,24 @@ class Martingale:
         # Golden Cross or Dead Cross
         if diPlusBfr < diMinusBfr and diPlus > diMinus:
             tradingSignal = self.OP_BUY
-            self.main.logging('■ checkDmiSignal() : BUY ' + self.code)
+            if self.real_mode:
+                self.main.logging('■ checkDmiSignal() : BUY ' + self.code)
         elif diPlusBfr > diMinusBfr and diPlus < diMinus:
             tradingSignal = self.OP_SELL
-            self.main.logging('■ checkDmiSignal() : SELL ' + self.code)
+            if self.real_mode:
+                self.main.logging('■ checkDmiSignal() : SELL ' + self.code)
 
         return tradingSignal
 
     def checkMacdSignal(self):
         tradingSignal = None
 
-        macd = talib.MACD(self.df_cur['Close'], self.config['MACD_SHORT_PERIOD'], self.config['MACD_LONG_PERIOD'],
-                          self.config['MACD_SIGNAL_PERIOD'])
+        macd, macdsignal, _ = talib.MACD(self.df_cur['Close'], self.config['MACD_SHORT_PERIOD'],
+                                         self.config['MACD_LONG_PERIOD'],
+                                         self.config['MACD_SIGNAL_PERIOD'])
 
-        mainBfr, main = macd['macd'][-2], macd['macd'][-1]
-        signalBfr, signal = macd['macdsignal'][-2], macd['macdsignal'][-1]
+        mainBfr, main = macd[-2], macd[-1]
+        signalBfr, signal = macdsignal[-2], macdsignal[-1]
 
         # Golden Cross or Dead Cross
         if mainBfr < signalBfr and main > signal:
@@ -135,6 +152,8 @@ class Martingale:
         return tradingSignal
 
     def checkOpen(self, orderType):
+        self.signal_count += 1
+
         # 거래 시작 : 15븐봉 완료시
         adx = talib.ADX(self.df_cur['High'], self.df_cur['Low'], self.df_cur['Close'], self.config['DMI_PERIOD'])[-1] \
             if self.config['CHECK_ADX_IND'] else 0
@@ -151,50 +170,89 @@ class Martingale:
         # envlLower = iCustom(NULL, 0, "Envelopes", ENVELOPES_PERIOD, 0, MODE_EMA, PRICE_CLOSE, ENVELOPES_DEVIATION, 1, 1) \
         #     if self.cofngi['CHECK_ENVELOPES_IND'] else 0
 
+        bPass = True
+
         # ADX 가 ADX_ALLOW_LEVEL보다 커야 거래
         if self.config['CHECK_ADX_IND'] and adx < self.config['ADX_ALLOW_LEVEL']:
-            self.main.logging('■ checkOpen() : ADX - ' + adx)
-            return None
+            if self.debug_mode:
+                self.main.logging('■ checkOpen() : ADX - ' + str(adx))
+                self.adx_count += 1
+                bPass = False
+            else:
+                return None
 
         if orderType == self.OP_BUY:
             # 종가가 LONG EMA 보다 크면 매수
             if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] < maLongTrend:
-                self.main.logging('■ checkOpen() : LONG TREND - ' + maLongTrend)
-                return None
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : LONG TREND - ' + str(maLongTrend))
+                    self.long_trend_count += 1
+                    bPass = False
+                else:
+                    return None
             # SHORT EMA 가 상승시 매수
             if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr > maShortTrend:
-                self.main.logging('■ checkOpen() : SHORT TREND - ' + maShortTrend)
-                return None
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : SHORT TREND - ' + str(maShortTrend))
+                    self.short_trend_count += 1
+                    bPass = False
+                else:
+                    return None
             # RSI가 50 이하에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi > 50:
-                self.main.logging('■ checkOpen() : RSI - ' + rsi)
-                return None
+            if self.config['CHECK_RSI_IND'] and rsi > 60:
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : RSI - ' + str(rsi))
+                    self.rsi_count += 1
+                    bPass = False
+                else:
+                    return None
             # Envelopes Upper 이하에서 매수
             # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] > envlUpper): return None
 
-            self.main.logging('■ checkOpen() : BUY ' + self.code)
+            if self.real_mode:
+                self.main.logging('■ checkOpen() : BUY ' + self.code)
         else:
             # 종가가 LONG EMA 보다 작으면 매도
             if self.config['CHECK_LONG_EMA_IND'] and self.df_cur['Close'][-1] > maLongTrend:
-                self.main.logging('■ checkOpen() : LONG TREND - ' + maLongTrend)
-                return None
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : LONG TREND - ' + str(maLongTrend))
+                    self.long_trend_count += 1
+                    bPass = False
+                else:
+                    return None
             # SHORT EMA 가 하락시 매도
             if self.config['CHECK_SHORT_EMA_IND'] and maShortTrendBfr < maShortTrend:
-                self.main.logging('■ checkOpen() : SHORT TREND - ' + maShortTrend)
-                return None
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : SHORT TREND - ' + str(maShortTrend))
+                    self.short_trend_count += 1
+                    bPass = False
+                else:
+                    return None
             # RSI가 50 이상에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi < 50:
-                self.main.logging('■ checkOpen() : RSI - ' + rsi)
-                return None
+            if self.config['CHECK_RSI_IND'] and rsi < 40:
+                if self.debug_mode:
+                    self.main.logging('■ checkOpen() : RSI - ' + str(rsi))
+                    self.rsi_count += 1
+                    bPass = False
+                else:
+                    return None
             # Envelopes Lower이상에서 매도
             # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] < envlLower): return None
 
-            self.main.logging('■ checkOpen() : SELL ' + self.code)
+            if self.real_mode:
+                self.main.logging('■ checkOpen() : SELL ' + self.code)
+
+        if bPass:
+            self.pass_count += 1
 
         return orderType
 
     def checkForOpen(self):
-        now = self.getUnitTime(datetime.datetime.now())
+        if self.real_mode:
+            now = self.getUnitTime(datetime.datetime.now())
+        else:
+            now = self.df_cur.index[-1]
+
         lastTime = self.getUnitTime(self.lastOrderTime)
 
         if lastTime is not None and lastTime == now: return None
@@ -212,7 +270,7 @@ class Martingale:
                 tradingSignal = self.checkOpen(self.OP_BUY)
 
         if tradingSignal is not None:
-            self.lastOrderTime = datetime.datetime.now()
+            self.lastOrderTime = now
 
         # if self.code == 'MSF':  # TEST
         #     return self.OP_BUY
@@ -220,7 +278,11 @@ class Martingale:
         return tradingSignal
 
     def addNewOrder(self):
-        now = self.getUnitTime(datetime.datetime.now())
+        if self.real_mode:
+            now = self.getUnitTime(datetime.datetime.now())
+        else:
+            now = self.df_cur.index[-1]
+
         lastTime = self.getUnitTime(self.lastOrderTime)
 
         if lastTime is not None and lastTime == now: return None
@@ -232,51 +294,58 @@ class Martingale:
             if self.trade.orderType == self.OP_BUY:
                 if self.trade.startPrice - self.config['FIRST_TRAILING_STEP'] * myPoint > self.close \
                         and self.checkOpen(self.OP_BUY):
-                    self.lastOrderTime = datetime.datetime.now()
+                    self.lastOrderTime = now
                     return self.OP_BUY
             elif self.trade.orderType == self.OP_SELL:
                 if self.trade.startPrice + self.config['FIRST_TRAILING_STEP'] * myPoint < self.close \
                         and self.checkOpen(self.OP_SELL):
-                    self.lastOrderTime = datetime.datetime.now()
+                    self.lastOrderTime = now
                     return self.OP_SELL
         else:
             if self.trade.orderType == self.OP_BUY:
-                if self.trade.startPrice - self.config['OTHER_TRAILING_STEP'] * myPoint > self.close \
+                if self.trade.lastPrice - self.config['OTHER_TRAILING_STEP'] * myPoint > self.close \
                         and self.checkOpen(self.OP_BUY):
-                    self.lastOrderTime = datetime.datetime.now()
+                    self.lastOrderTime = now
                     return self.OP_BUY
             elif self.trade.orderType == self.OP_SELL:
-                if self.trade.startPrice + self.config['OTHER_TRAILING_STEP'] * myPoint < self.close \
+                if self.trade.lastPrice + self.config['OTHER_TRAILING_STEP'] * myPoint < self.close \
                         and self.checkOpen(self.OP_SELL):
-                    self.lastOrderTime = datetime.datetime.now()
+                    self.lastOrderTime = now
                     return self.OP_SELL
 
         return None
 
     def checkForClose(self):
+        if self.real_mode:
+            now = self.getUnitTime(datetime.datetime.now())
+        else:
+            now = self.df_cur.index[-1]
+
         myPoint = self.getPipPoint()
 
         # 익절(현재 수익 > 기준 수익)
         if self.trade.totalProfit > self.config['MINIMUM_PROFIT']:
-            self.lastOrderTime = datetime.datetime.now()
+            self.lastOrderTime = now
             return self.OP_CLOSE
 
         # 차수 초과시 손절
         if self.trade.totalProfit < 0:
-            bOverDue = (datetime.datetime.now() - self.trade.startDate).days >= self.config['LOSS_CUT_DAYS']
-
+            bOverDue = (now - self.trade.startDate).days >= self.config['LOSS_CUT_DAYS']
+            # print(self.trade, self.close, bOverDue)
             if self.trade.orderType == self.OP_BUY \
                     and self.trade.startPrice - self.config['LOSS_CUT_PIPS'] * myPoint > self.close or bOverDue:
-                self.lastOrderTime = datetime.datetime.now()
+                self.releaseDate = now + datetime.timedelta(days=self.config['HOLD_DAYS_AFTER_LOSS_CUT'])
+                self.lastOrderTime = now
                 return self.OP_CLOSE
             elif self.trade.orderType == self.OP_SELL \
                     and self.trade.startPrice + self.config['LOSS_CUT_PIPS'] * myPoint < self.close or bOverDue:
-                self.lastOrderTime = datetime.datetime.now()
+                self.releaseDate = now + datetime.timedelta(days=self.config['HOLD_DAYS_AFTER_LOSS_CUT'])
+                self.lastOrderTime = now
                 return self.OP_CLOSE
 
         # 추가 진입 체크
         if self.trade.totalProfit < 0 and self.trade.degree < self.config['LIMIT_MAX_DEGREE'] - 1:
-            self.addNewOrder()
+            return self.addNewOrder()
 
     def getNextOrderLots(self):
         nowlots = self.trade.contract
@@ -284,3 +353,16 @@ class Martingale:
         addLots = nextLots - nowlots
 
         return addLots if addLots > 0 else 1
+
+    def showCheckOpen(self):
+        if self.debug_mode:
+            print()
+            print("SIGNAL      =", self.signal_count)
+            print("ADX         =", self.adx_count, "(", round(self.adx_count / self.signal_count * 100, 2), "%)")
+            print("RSI         =", self.rsi_count, "(", round(self.rsi_count / self.signal_count * 100, 2), "%)")
+            print("LONG TREND  =", self.long_trend_count,
+                  "(", round(self.long_trend_count / self.signal_count * 100, 2), "%)")
+            print("SHORT TREND =", self.short_trend_count,
+                  "(", round(self.short_trend_count / self.signal_count * 100, 2), "%)")
+            print("PASS        =", self.pass_count, "(", round(self.pass_count / self.signal_count * 100, 2), "%)")
+            print()

@@ -13,7 +13,32 @@
 - pip install pykiwoom
 - pip install pymysql
 - pip install pyqtwebengine
-- pip install ruamel-yaml
 - pip install pyautogui
-- pip install pygetwindow
-- 
+- pip install pyarrow
+- pip install fastparquet
+- pip install pandas==2.0.3
+
+## Experiment
+[ ADX : 20 ]
+- SIGNAL      = 9613
+- ADX         = 6158 ( 64.06 %)
+- RSI         = 2519 ( 26.2 %)
+- LONG TREND  = 5677 ( 59.06 %)
+- SHORT TREND = 5268 ( 54.8 %)
+- PASS        = 257 ( 2.67 %)
+
+[ ADX : 15 ]
+- SIGNAL      = 9613
+- ADX         = 3232 ( 33.62 %)
+- RSI         = 2519 ( 26.2 %)
+- LONG TREND  = 5677 ( 59.06 %)
+- SHORT TREND = 5268 ( 54.8 %)
+- PASS        = 501 ( 5.21 %)
+
+[ ADX : 15, RSI : 40, 60 ]
+- SIGNAL      = 9613
+- ADX         = 3232 ( 33.62 %)
+- RSI         = 232 ( 2.41 %)
+- LONG TREND  = 5677 ( 59.06 %)
+- SHORT TREND = 5268 ( 54.8 %)
+- PASS        = 1080 ( 11.23 %)

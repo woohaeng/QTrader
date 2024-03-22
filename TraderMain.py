@@ -27,7 +27,7 @@ class TraderMain(QMainWindow, TraderMainForm):
         self.logCounter = 0
         # self.tr_event_loop = None
         self.timer = QTimer(self)
-        self.timer.setInterval(5000)
+        self.timer.setInterval(10000)
         self.timer.timeout.connect(self.timerUpdate)
         self.jobStep = 0
 
@@ -104,6 +104,7 @@ class TraderMain(QMainWindow, TraderMainForm):
 
             params = json.loads(row['parameters'])
             mtg = Martingale(self, row['magic_no'], params)
+            mtg.debug_mode = True
 
             tableItem = QTableWidgetItem(str(row['magic_no']))
             tableItem.setTextAlignment(Qt.AlignCenter)
@@ -519,7 +520,7 @@ class TraderMain(QMainWindow, TraderMainForm):
             status = result.loc[mtg.magic_no].fillna(0)
 
             if df2.empty and status.contract != 0:
-                self.db.delete_trading_info_status(self.sAccNo, mtg.magic_no)
+                self.db.delete_trading_info_status(self.sAccNo, mtg.magic_no, mtg.releaseDate)
             elif not df2.empty and status.contract < df2['수량']:
                 if status.contract == 0:
                     self.db.insert_trading_info_status(self.sAccNo, mtg.magic_no, df2['현재가격'], df2['수량'])
@@ -536,17 +537,15 @@ class TraderMain(QMainWindow, TraderMainForm):
 
         df_holding = self.df_holding[self.df_holding['종목코드'].str.contains(mtg.code)]
         if len(df_holding) > 0:
+            trade.orderType = mtg.OP_SELL if df_holding.iloc[0]['매도수구분']== 1 else mtg.OP_BUY
             trade.totalProfit = df_holding['평가손익'].sum()
-            trade.orderType = df_holding.iloc[0]['매도수구분']
-            trade.orderType = mtg.OP_SELL if trade.orderType == 1 else mtg.OP_BUY
-            trade.price = df_holding.iloc[0]['현재가격']
-
             trade.startDate = result['start_date']
             trade.startPrice = result['start_price']
             trade.lastPrice = result['last_price']
             trade.degree = result['degree']
             trade.contract = int(df_holding.iloc[0]['수량'])
             trade.releaseTime = result['release_date']
+            trade.price = df_holding.iloc[0]['현재가격']
         else:
             return None
 
@@ -613,7 +612,7 @@ class TraderMain(QMainWindow, TraderMainForm):
         # 포지션 청산 체크
         self.logging('Start closeCheck()')
 
-        # 포지션 진입 체크
+        # 포지션 청산 체크
         for mtg_no in range(len(self.mtg)):
             mtg = self.mtg[mtg_no]
 
@@ -696,12 +695,12 @@ class TraderMain(QMainWindow, TraderMainForm):
                 if signal == mtg.OP_SELL:
                     sCode = self.getNextCode(mtg.code)
                     lots = mtg.getNextOrderLots()
-                    self.logging(f'■ 추가 주문: 매도, #{mtg.magic_no}, {sCode}')
+                    self.logging(f'■ 추가 주문: 매도, #{mtg.magic_no}, {sCode}, {lots}')
                     self.orderOpen(1, sCode, lots, "0", "0", "1")  # 시장가 매도
                 elif signal == mtg.OP_BUY:
                     sCode = self.getNextCode(mtg.code)
                     lots = mtg.getNextOrderLots()
-                    self.logging(f'■ 추가 주문: 매수, #{mtg.magic_no}, {sCode}')
+                    self.logging(f'■ 추가 주문: 매수, #{mtg.magic_no}, {sCode}, {lots}')
                     self.orderOpen(2, sCode, lots, "0", "0", "1")  # 시장가 매수
 
         self.logging('Finished closeCheck()')
@@ -827,6 +826,9 @@ class TraderMain(QMainWindow, TraderMainForm):
                             if fld.__contains__("color") and fld["color"] == "Y":
                                 tableItem.setForeground(QBrush(self.getPriceForm(org)))
                             self.tbHistory.setItem(i, j, tableItem)
+
+                    self.df_history["주문번호"] = self.df_history['체결시간'].str.replace("/", "").str.replace(":", "").str.replace(" ", "")
+                    self.df_history["주문번호"] = self.df_history["주문번호"] + self.df_history.index.astype('str').to_list()
 
                     self.tbHistory.show()
 

@@ -1,178 +1,235 @@
-import numpy as np
+import os
+# import numpy as np
+# import duckdb
 from datetime import datetime
+import pandas as pd
 from Martingale import *
 from Database import *
 
+
 class TraderSimul:
     def __init__(self):
-        super().__init__()
-
-        self.mtg = Martingale(self, row['magic_no'], params)
-
+        self.mtg = None
+        self.df_cur_agg = pd.DataFrame()
+        self.df_cur = pd.DataFrame()
         self.db = Database(self.logging)
-        self.loadMartingaleInfo()
 
-        self.openLoginPannel()
+        self.history = []
+        self.df_order = pd.DataFrame(columns=['type', 'lots', 'price', 'commission', 'swap', 'profit'])
+        self.signal = None
+        self.init_equity = 100000
+        self.equity = self.init_equity
+        self.profit = 0
+        self.mdd = 0
+        self.total_trade = 0
+        self.profit_trade = 0
 
-    def timerUpdate(self):
-        self.timer.stop()
+    def loadData(self, filename):
+        # df = duckdb.sql(f"""
+        #     select strptime(concat("<DTYYYYMMDD>", "<TIME>"), '%Y%m%d%H%M') + INTERVAL 9 HOUR  + INTERVAL 1 MINUTE as time,
+        #            "<OPEN>" as open, "<HIGH>" as high, "<LOW>" as low, "<CLOSE>" as close
+        #     from read_csv_auto('{filename}')""").df()
+        #
+        # df.set_index('time', inplace=True)
 
-        try:
-            if self.jobStep == 0:  # 새로고침
-                self.lbSave.setStyleSheet("")
-                self.lbRefresh.setStyleSheet("background-color: rgb(255, 200, 255);")
-                self.jangoRefresh()
-                self.orderRefresh()
-                self.holdingRefresh()
-                self.historyRefresh()
-                self.jobStep += 1
-            elif self.jobStep == 1:  # 시그널 체크
-                self.lbRefresh.setStyleSheet("")
-                self.lbOpen.setStyleSheet("background-color: rgb(255, 200, 255);")
-                now = datetime.datetime.now()
-                stime = now.replace(minute=now.minute // 15 * 15, second=0, microsecond=0)
+        parquetfile = filename.replace(".csv", ".parquet")
+        if os.path.exists(parquetfile):
+            df = pd.read_parquet(parquetfile)
+        else:
+            df = pd.read_csv(filename, dtype={'<DTYYYYMMDD>': str, '<TIME>': str},
+                             usecols=['<DTYYYYMMDD>', '<TIME>', '<OPEN>', '<HIGH>', '<LOW>', '<CLOSE>'])
 
-                if self.checkTime != stime:
-                    self.applyTrade()
-                    self.openCheck()
-                    self.checkTime = stime
+            df.index = pd.to_datetime(df['<DTYYYYMMDD>'] + df['<TIME>'])
+            df.index.name = 'time'
+            df.drop(['<DTYYYYMMDD>', '<TIME>'], inplace=True, axis=1)
+            df.columns = ['open', 'high', 'low', 'close']
+            df.index = df.index.shift(9, freq='H')
+            df.to_parquet(parquetfile, compression='gzip')
 
-                self.jobStep += 1
-            elif self.jobStep == 2:  # 청산 체크
-                self.lbOpen.setStyleSheet("")
-                self.lbClose.setStyleSheet("background-color: rgb(255, 200, 255);")
-                self.applyTrade()
-                self.closeCheck()
-                self.jobStep += 1
-            elif self.jobStep == 3:  # DB 저장
-                self.lbClose.setStyleSheet("")
-                self.lbSave.setStyleSheet("background-color: rgb(255, 200, 255);")
-                self.db.insert_trading_log(self)
-                self.db.insert_trading_history(self)
-                self.jobStep = 0
-            else:
-                self.jobStep += 1
-
-        except Exception as error:
-            self.logging('[Exception] {} in timerUpdate()'.format(error))
-
-        self.timer.start()
+        return df
 
     def getOrderInfo(self, mtg):
         # 현재 상태 확인
         trade = MyTrade()
 
-        result = self.db.select_trading_info_status(self.sAccNo, mtg.magic_no).iloc[0]
+        close = self.df_cur.iloc[-1]['Close']
+        point = self.mtg.getPipPoint()
 
-        df_holding = self.df_holding[self.df_holding['종목코드'].str.contains(mtg.code)]
-        if len(df_holding) > 0:
-            trade.totalProfit = df_holding['평가손익'].sum()
-            trade.orderType = df_holding.iloc[0]['매도수구분']
-            trade.orderType = mtg.OP_SELL if trade.orderType == 1 else mtg.OP_BUY
-            trade.price = df_holding.iloc[0]['현재가격']
+        self.df_order['profit'] = self.df_order.apply(lambda x: (close - x['price']) * x['lots'] / point \
+            if x['type'] == self.mtg.OP_BUY else (x['price'] - close) * x['lots'] / point, axis=1)
 
-            trade.startDate = result['start_date']
-            trade.startPrice = result['start_price']
-            trade.lastPrice = result['last_price']
-            trade.degree = result['degree']
-            trade.contract = int(df_holding.iloc[0]['수량'])
-            trade.releaseTime = result['release_date']
-        else:
-            return None
+        trade.orderType = self.df_order.iloc[-1]['type']
+        trade.totalProfit = self.df_order['profit'].sum()
+        trade.startDate = self.df_cur.index[-1]
+        trade.startPrice = self.df_order.iloc[0]['price']
+        trade.lastPrice = self.df_order.iloc[-1]['price']
+        trade.degree = len(self.df_order) - 1
+        trade.contract = self.df_order['lots'].sum()
+        trade.releaseDate = self.mtg.releaseDate
+        trade.price = close
 
         mtg.trade = trade
 
     def openCheck(self):
-        self.logging('Start openCheck()')
-
         # 포지션 진입 체크
-        for mtg_no in range(len(self.mtg)):
-            mtg = self.mtg[mtg_no]
+        # self.logging('Start openCheck()')
 
-            status = self.tbAlgorithm.item(mtg_no, 3)
-            if status.text() == "BUY" or status.text() == "SELL":
-                continue
+        self.mtg.df_cur = self.df_cur
 
-            mtg.df_cur = self.df_cur
+        signal = self.mtg.checkForOpen()
 
-            signal = mtg.checkForOpen()
+        if signal == self.mtg.OP_SELL or signal == self.mtg.OP_BUY:
+            lots = self.mtg.config["ORDER_LOTS"]
+            df_new = pd.DataFrame([{'type': signal,
+                         'lots': lots,
+                         'price': self.df_cur.iloc[-1]['Close'],
+                         'commission': lots * 2,
+                         'swap': 0,
+                         'profit': 0}])
+            self.df_order = pd.concat([self.df_order, df_new], axis=0)
+            self.signal = signal
 
-            if signal == mtg.OP_SELL:
-                sCode = self.getNextCode(mtg.code)
-                self.logging(f'■ 신규 주문: 매도, #{mtg.magic_no}, {sCode}')
-                self.orderOpen(1, sCode, 1, "0", "0", "1")  # 시장가 매도
-            elif signal == mtg.OP_BUY:
-                sCode = self.getNextCode(mtg.code)
-                self.logging(f'■ 신규 주문: 매수, #{mtg.magic_no}, {sCode}')
-                self.orderOpen(2, sCode, 1, "0", "0", "1")  # 시장가 매수
+        history = {'time': self.df_cur.index[-1],
+                   'close': self.df_cur.iloc[-1]['Close'],
+                   'equity': self.equity,
+                   'openLots': 0,
+                   'openProfit': 0,
+                   'commission': 0,
+                   'swap': 0}
+        self.history.append(history)
 
-        self.logging('Finished openCheck()')
+        # self.logging('Finished openCheck()')
 
     def closeCheck(self):
         # 포지션 청산 체크
-        self.logging('Start closeCheck()')
+        # self.logging('Start closeCheck()')
 
-        # 포지션 진입 체크
-        for mtg_no in range(len(self.mtg)):
-            mtg = self.mtg[mtg_no]
+        # 포지션 청산 체크
+        self.getOrderInfo(self.mtg)
 
-            status = self.tbAlgorithm.item(mtg_no, 3)
-            if status.text() != "BUY" and status.text() != "SELL":
-                continue
+        if self.mtg.trade is not None:
+            self.mtg.df_cur = self.df_cur
+            self.mtg.close = self.df_cur.iloc[-1]['Close']
 
-            self.getOrderInfo(mtg)
-            if mtg.trade is None:
-                continue
+            signal = self.mtg.checkForClose()
 
-            if mtg.trade.totalProfit < 0:
-                # 차트 조회
-                self.df_cur = pd.DataFrame()
+            if signal == self.mtg.OP_CLOSE:  # 청산
+                self.equity = self.equity + self.mtg.trade.totalProfit
+                print("date:", self.df_cur.index[-1], ", equity:", round(self.equity, 1),
+                      ", profit:", round(self.mtg.trade.totalProfit, 1),
+                      ", degree:", self.mtg.trade.degree)
 
-                if self.df_cur.empty:
-                    continue
+                self.total_trade += 1
+                if self.mtg.trade.totalProfit > 0:
+                    self.profit_trade += 1
 
-                mtg.df_cur = self.df_cur
-                mtg.close = self.df_cur.iloc[-1]['Close']
-            else:
-                df_holding = self.df_holding[self.df_holding['종목코드'].str.contains(mtg.code)]
-                mtg.close = df_holding.iloc[0]['현재가격']
+                self.mtg.trade = MyTrade()
+                self.mtg.trade.totalProfit = 0
+                self.mtg.trade.contract = 0
+                self.df_order = pd.DataFrame(columns=self.df_order.columns)
+                self.signal = None
 
-            signal = mtg.checkForClose()
+            elif signal == self.mtg.OP_SELL or signal == self.mtg.OP_BUY:  # 추가 주문
+                lots = self.mtg.getNextOrderLots()
+                df_new = pd.DataFrame([{'type': signal,
+                             'lots': lots,
+                             'price': self.df_cur.iloc[-1]['Close'],
+                             'commission': lots * 2,
+                             'swap': 0,
+                             'profit': 0}])
+                self.df_order = pd.concat([self.df_order, df_new], axis=0)
+                self.signal = signal
 
-            if signal == mtg.OP_CLOSE:  # 청산
-                df = self.df_holding[self.df_holding['종목코드'].str.contains(mtg.code)]
-                if len(df) == 0:
-                    continue
+        history = {'time': self.df_cur.index[-1],
+                   'close': self.df_cur.iloc[-1]['Close'],
+                   'equity': self.equity + self.mtg.trade.totalProfit,
+                   'openLots': self.mtg.trade.contract,
+                   'openProfit': self.mtg.trade.totalProfit,
+                   'commission': self.mtg.trade.contract * 2,
+                   'swap': 0}
 
-                signal = mtg.OP_SELL if df.iloc[0]['매도수구분'] == 1 else mtg.OP_BUY
-                sCode = df.iloc[0]['종목코드']
+        self.history.append(history)
 
-                if signal == mtg.OP_SELL:
-                    self.logging(f'■ 청산 주문: 매도 -> 매수, #{mtg.magic_no}, {sCode}')
-                    self.orderOpen(2, sCode, mtg.trade.contract, "0", "0", "1")  # 시장가 매도
-                elif signal == mtg.OP_BUY:
-                    self.logging(f'■ 청산 주문: 매수 -> 매도, #{mtg.magic_no}, {sCode}')
-                    self.orderOpen(1, sCode, mtg.trade.contract, "0", "0", "1")  # 시장가 매수
-            else:  # 추가 진입
-                if signal == mtg.OP_SELL:
-                    sCode = self.getNextCode(mtg.code)
-                    lots = mtg.getNextOrderLots()
-                    self.logging(f'■ 추가 주문: 매도, #{mtg.magic_no}, {sCode}')
-                    self.orderOpen(1, sCode, lots, "0", "0", "1")  # 시장가 매도
-                elif signal == mtg.OP_BUY:
-                    sCode = self.getNextCode(mtg.code)
-                    lots = mtg.getNextOrderLots()
-                    self.logging(f'■ 추가 주문: 매수, #{mtg.magic_no}, {sCode}')
-                    self.orderOpen(2, sCode, lots, "0", "0", "1")  # 시장가 매수
+        # self.logging('Finished closeCheck()')
 
-        self.logging('Finished closeCheck()')
+    def logging(self, strData):
+        print(strData)
+
+    def get_compute_mdd(self, mlogs):
+        mlog_s = mlogs[0]
+        mdds = []
+        # max_mdd = 0
+        for mlog in mlogs:
+            cur_mdd = mlog / mlog_s - 1
+            if cur_mdd > 0:
+                cur_mdd = 0
+                mlog_s = mlog
+
+            # if cur_mdd < max_mdd:
+            #     max_mdd = cur_mdd
+
+            # mdds.append(abs(max_mdd) * 100)
+            mdds.append(abs(cur_mdd) * 100)
+
+        return mdds
 
     def main(self):
+        df_all = self.loadData("rawdata\eurusd.csv")
+        df_all['time'] = pd.to_datetime(df_all['time'])
+        df_all.set_index('time', inplace=True)
 
-        pass
+        # {"[BASIC]": "^.^", "MAGIC_NUMBER": "202311010", "MEMO": "1", "ORDER_LOTS": 0.03, "LOTS_MULTIPLE": 1.5,
+        #  "MINIMUM_PROFIT": 2, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 80, "OTHER_TRAILING_STEP": 30,
+        #  "LIMIT_MAX_DEGREE": 8, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30,
+        #  "[ALGORITHM]": "^.^", "ALGORITHM_TYPE": 0, "ALGORITHM_NAME*": "DMI", "DMI_PERIOD": 9, "[COMMON]": "^.^",
+        #  "CHECK_ADX_IND": true, "CHECK_RSI_IND": true, "CHECK_LONG_EMA_IND": true, "CHECK_SHORT_EMA_IND": true,
+        #  "CHECK_ENVELOPES_IND": false, "ADX_ALLOW_LEVEL": 20, "LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3,
+        #  "ENVELOPES_PERIOD": 200, "ENVELOPES_DEVIATION": 0.5}
+
+        params = json.loads('''{"MEMO": "CME", "SYMBOL": "EURUSD", "CODE": "M6E", "ORDER_LOTS": 1, "LOTS_MULTIPLE": 1.5, 
+         "MINIMUM_PROFIT": 67, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, "OTHER_TRAILING_STEP": 50, 
+         "LIMIT_MAX_DEGREE": 10, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30, 
+         "ALGORITHM_TYPE": "ALGO_DMI", "DMI_PERIOD": 12, "MACD_LONG_PERIOD": 26, "MACD_SHORT_PERIOD": 12, 
+         "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, "CHECK_ADX_IND": false, "CHECK_RSI_IND": false, 
+         "CHECK_LONG_EMA_IND": false, "CHECK_SHORT_EMA_IND": false, "CHECK_ENVELOPES_IND": false, 
+         "ADX_ALLOW_LEVEL": 15, "LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3, "ENVELOPES_PERIOD": 200, 
+         "ENVELOPES_DEVIATION": 0.5}''')
+
+        self.mtg = Martingale(self, 0, params)
+        self.mtg.real_mode = False
+
+        time_unit = self.mtg.config['TIME_UNIT']
+
+        dict_agg = dict(close='last', open='first', high='max', low='min')
+        grouper = pd.Grouper(freq=f'{time_unit}min', closed='right', label='right')
+        self.df_cur_agg = df_all.groupby(grouper).agg(dict_agg)
+        self.df_cur_agg.dropna(inplace=True)
+        self.df_cur_agg.columns = ['Open', 'High', 'Low', 'Close']
+
+        print(self.df_cur_agg)
+
+        for i in range(500, len(self.df_cur_agg)):
+        # for i in range(500, 5000):
+            self.df_cur = self.df_cur_agg.iloc[i - 500:i].copy()
+
+            if self.signal is None:
+                self.openCheck()
+            else:
+                self.closeCheck()
+
+        self.mtg.showCheckOpen()
 
     def save(self):
-        pass
+        df_mlogs = pd.DataFrame(self.history)
+        # print(df_mlogs)
+
+        self.profit = round(df_mlogs.iloc[-1]['equity'] - self.init_equity, 1)
+        df_mdd = self.get_compute_mdd(df_mlogs["equity"].values)
+        self.mdd = round(max(df_mdd), 4)
+
+        lastrowid = self.db.insert_test_info(self)
+        self.db.insert_test_logs(df_mlogs, lastrowid)
+
 
 if __name__ == "__main__":
     simul = TraderSimul()

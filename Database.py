@@ -1,4 +1,6 @@
+import json
 import datetime
+from io import StringIO
 from sqlalchemy.sql import text
 from database.DB_Handler import DBHandler
 
@@ -10,6 +12,7 @@ class Database:
 
     def select_trading_info(self, account_no):
         self.logging(self.prefix + "select_trading_info()")
+
         try:
             # stmt = text(f"SELECT * FROM trading_info WHERE account_no = {account_no} AND expire_yn = 'N' ORDER BY magic_no")
             stmt = text(f"SELECT a.*, b.start_date, b.start_price, b.last_price, b.degree, b.contract, b.release_date "
@@ -25,6 +28,7 @@ class Database:
 
     def select_trading_info_status(self, account_no, magic_no):
         self.logging(self.prefix + "select_trading_info_status()")
+
         try:
             stmt = text(f"SELECT * FROM trading_info_status WHERE account_no = {account_no} AND magic_no = {magic_no}")
             result = self.dbHandler.retrive_stmt(stmt)
@@ -36,9 +40,10 @@ class Database:
 
     def insert_trading_info_status(self, account_no, magic_no, start_price, contract):
         self.logging(self.prefix + "insert_trading_info_status()")
+
         try:
-            stmt = f"REPLACE INTO trading_info_status (account_no, magic_no, start_date, start_price, last_price, " \
-                   f"`degree`, contract, release_date) " \
+            stmt = f"REPLACE INTO trading_info_status (account_no, magic_no, start_date, start_price, " \
+                   f"last_price, `degree`, contract, release_date) " \
                    f"VALUES ({account_no}, {magic_no}, NOW(), {start_price}, '{start_price}', 0, {contract}, null)"
             self.dbHandler.execute(None, stmt)
 
@@ -47,19 +52,21 @@ class Database:
 
     def update_trading_info_status(self, account_no, magic_no, last_price, contract):
         self.logging(self.prefix + "update_trading_info_status()")
+
         try:
-            stmt = f"UPDATE trading_info_status SET last_price = {last_price}, degree = degree + 1, `contract` = {contract} " \
-                   f"WHERE account_no = {account_no} AND magic_no = {magic_no}"
+            stmt = f"UPDATE trading_info_status SET last_price = {last_price}, degree = degree + 1, " \
+                   f"`contract` = {contract} WHERE account_no = {account_no} AND magic_no = {magic_no}"
             self.dbHandler.execute(None, stmt)
 
         except Exception as error:
             self.logging('[Exception] {} in select_trading_info()'.format(error))
 
-    def delete_trading_info_status(self, account_no, magic_no):
+    def delete_trading_info_status(self, account_no, magic_no, releaseDate):
         self.logging(self.prefix + "delete_trading_info_status()")
+
         try:
-            stmt = f"UPDATE trading_info_status SET start_date = null, start_price = 0, last_price = 0, last_price = 0, " \
-                   f"degree = 0, contract = 0, release_date = null " \
+            stmt = f"UPDATE trading_info_status SET start_date = null, start_price = 0, last_price = 0, " \
+                   f"last_price = 0, degree = 0, contract = 0, release_date = '{releaseDate}' " \
                    f"WHERE account_no = {account_no} AND magic_no = {magic_no}"
             self.dbHandler.execute(None, stmt)
 
@@ -121,7 +128,7 @@ class Database:
                 stmt += "("
                 stmt += main.sAccNo + ","
                 stmt += str(magic_no) + ","
-                stmt += df['체결시간'].replace("/", "").replace(":", "").replace(" ", "")[-10:] + ","
+                stmt += df['주문번호'] + ","
                 stmt += "'" + df['매입일자'] + "',"
                 stmt += "'SELL'," if df['매도수구분'] == 1 else "'BUY',"
                 stmt += str(int(df['수량'])) + ","
@@ -194,3 +201,32 @@ class Database:
 
         except Exception as error:
             self.logging('[Exception] {} in insert_trading_log()'.format(error))
+
+    def insert_test_info(self, main):
+        self.logging(self.prefix + "insert_test_info()")
+
+        try:
+            stmt = f"INSERT INTO test_info (ea_name, symbol, timeunit, parameters, from_date, to_date, init_deposit, " \
+                   f"total_net_profit, max_drawdown, total_trade, profit_trade) " \
+                   f"VALUES ('키움CME', '{main.mtg.config['SYMBOL']}', {main.mtg.config['TIME_UNIT']}, " \
+                   f"'{json.dumps(main.mtg.config)}', '{main.df_cur_agg.index[0]}', '{main.df_cur_agg.index[-1]}', " \
+                   f"{main.init_equity}, {main.profit}, {main.mdd}, {main.total_trade}, {main.profit_trade})"
+            result = self.dbHandler.execute(None, stmt)
+
+            return result.lastrowid
+
+        except Exception as error:
+            self.logging('[Exception] {} in insert_test_info()'.format(error))
+
+    def insert_test_logs(self, df_mlogs, lastrowid):
+        self.logging(self.prefix + "insert_test_logs()")
+
+        try:
+            csv_data  = StringIO()
+            df_mlogs.to_csv(csv_data, index=False)
+
+            stmt = f"INSERT INTO `test_logs` (test_id, logs) VALUES ({lastrowid}, '{csv_data.getvalue()}')"
+            self.dbHandler.execute(None, stmt)
+
+        except Exception as error:
+            self.logging('[Exception] {} in insert_test_logs()'.format(error))
