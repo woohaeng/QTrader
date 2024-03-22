@@ -1,8 +1,4 @@
 import os
-# import numpy as np
-# import duckdb
-from datetime import datetime
-import pandas as pd
 from Martingale import *
 from Database import *
 
@@ -25,13 +21,6 @@ class TraderSimul:
         self.profit_trade = 0
 
     def loadData(self, filename):
-        # df = duckdb.sql(f"""
-        #     select strptime(concat("<DTYYYYMMDD>", "<TIME>"), '%Y%m%d%H%M') + INTERVAL 9 HOUR  + INTERVAL 1 MINUTE as time,
-        #            "<OPEN>" as open, "<HIGH>" as high, "<LOW>" as low, "<CLOSE>" as close
-        #     from read_csv_auto('{filename}')""").df()
-        #
-        # df.set_index('time', inplace=True)
-
         parquetfile = filename.replace(".csv", ".parquet")
         if os.path.exists(parquetfile):
             df = pd.read_parquet(parquetfile)
@@ -158,17 +147,12 @@ class TraderSimul:
     def get_compute_mdd(self, mlogs):
         mlog_s = mlogs[0]
         mdds = []
-        # max_mdd = 0
         for mlog in mlogs:
             cur_mdd = mlog / mlog_s - 1
             if cur_mdd > 0:
                 cur_mdd = 0
                 mlog_s = mlog
 
-            # if cur_mdd < max_mdd:
-            #     max_mdd = cur_mdd
-
-            # mdds.append(abs(max_mdd) * 100)
             mdds.append(abs(cur_mdd) * 100)
 
         return mdds
@@ -178,22 +162,13 @@ class TraderSimul:
         df_all['time'] = pd.to_datetime(df_all['time'])
         df_all.set_index('time', inplace=True)
 
-        # {"[BASIC]": "^.^", "MAGIC_NUMBER": "202311010", "MEMO": "1", "ORDER_LOTS": 0.03, "LOTS_MULTIPLE": 1.5,
-        #  "MINIMUM_PROFIT": 2, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 80, "OTHER_TRAILING_STEP": 30,
-        #  "LIMIT_MAX_DEGREE": 8, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30,
-        #  "[ALGORITHM]": "^.^", "ALGORITHM_TYPE": 0, "ALGORITHM_NAME*": "DMI", "DMI_PERIOD": 9, "[COMMON]": "^.^",
-        #  "CHECK_ADX_IND": true, "CHECK_RSI_IND": true, "CHECK_LONG_EMA_IND": true, "CHECK_SHORT_EMA_IND": true,
-        #  "CHECK_ENVELOPES_IND": false, "ADX_ALLOW_LEVEL": 20, "LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3,
-        #  "ENVELOPES_PERIOD": 200, "ENVELOPES_DEVIATION": 0.5}
-
         params = json.loads('''{"MEMO": "CME", "SYMBOL": "EURUSD", "CODE": "M6E", "ORDER_LOTS": 1, "LOTS_MULTIPLE": 1.5, 
          "MINIMUM_PROFIT": 67, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, "OTHER_TRAILING_STEP": 50, 
          "LIMIT_MAX_DEGREE": 10, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30, 
          "ALGORITHM_TYPE": "ALGO_DMI", "DMI_PERIOD": 12, "MACD_LONG_PERIOD": 26, "MACD_SHORT_PERIOD": 12, 
-         "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, "CHECK_ADX_IND": false, "CHECK_RSI_IND": false, 
-         "CHECK_LONG_EMA_IND": false, "CHECK_SHORT_EMA_IND": false, "CHECK_ENVELOPES_IND": false, 
-         "ADX_ALLOW_LEVEL": 15, "LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3, "ENVELOPES_PERIOD": 200, 
-         "ENVELOPES_DEVIATION": 0.5}''')
+         "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, "CHECK_ADX_IND": true, "CHECK_RSI_IND": true, 
+         "CHECK_LONG_EMA_IND": false, "CHECK_SHORT_EMA_IND": false, "ADX_ALLOW_LEVEL": 15, "LONG_MA_PERIOD": 200, 
+         "SHORT_MA_PERIOD": 3, "RSI_ALLOW_LEVEL": 40}''')
 
         self.mtg = Martingale(self, 0, params)
         self.mtg.real_mode = False
@@ -206,10 +181,9 @@ class TraderSimul:
         self.df_cur_agg.dropna(inplace=True)
         self.df_cur_agg.columns = ['Open', 'High', 'Low', 'Close']
 
-        print(self.df_cur_agg)
+        # print(self.df_cur_agg)
 
         for i in range(500, len(self.df_cur_agg)):
-        # for i in range(500, 5000):
             self.df_cur = self.df_cur_agg.iloc[i - 500:i].copy()
 
             if self.signal is None:
@@ -221,7 +195,6 @@ class TraderSimul:
 
     def save(self):
         df_mlogs = pd.DataFrame(self.history)
-        # print(df_mlogs)
 
         self.profit = round(df_mlogs.iloc[-1]['equity'] - self.init_equity, 1)
         df_mdd = self.get_compute_mdd(df_mlogs["equity"].values)
@@ -229,6 +202,9 @@ class TraderSimul:
 
         lastrowid = self.db.insert_test_info(self)
         self.db.insert_test_logs(df_mlogs, lastrowid)
+
+        print(f"test_id = {lastrowid}")
+        print(f"profit = {self.profit}, mdd = {self.mdd}, total trade = {self.total_trade}")
 
 
 if __name__ == "__main__":

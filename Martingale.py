@@ -29,16 +29,13 @@ class Martingale:
 
         # self.config = json.loads('{"SYMBOL": "NONE", "ORDER_LOTS": 0.03, "LOTS_MULTIPLE": 1.5, "MINIMUM_PROFIT": 2, ' \
         # profit : 2$ / 3 * 100 = 67$
-        self.config = json.loads(
-            '{"MEMO": "CME", "SYMBOL": "NONE", "CODE": "NONE", "TIME_UNIT": 15, "ORDER_LOTS": 1, "LOTS_MULTIPLE": 2.0, '
-            '"MINIMUM_PROFIT": 67, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, "OTHER_TRAILING_STEP": 50, ' \
-            '"LIMIT_MAX_DEGREE": 10, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, "HOLD_DAYS_AFTER_LOSS_CUT": 30, ' \
-            '"ALGORITHM_TYPE": "ALGO_DMI", "DMI_PERIOD": 12, "MACD_LONG_PERIOD": 26, ' \
-            '"MACD_SHORT_PERIOD": 12, "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, ' \
-            '"CHECK_ADX_IND": true, "CHECK_RSI_IND": true, "CHECK_LONG_EMA_IND": true, ' \
-            '"CHECK_SHORT_EMA_IND": true, "CHECK_ENVELOPES_IND": false, "ADX_ALLOW_LEVEL": 15, ' \
-            '"LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3, "ENVELOPES_PERIOD": 200, ' \
-            '"ENVELOPES_DEVIATION": 0.5}')
+        self.config = json.loads('''{"MEMO": "CME", "SYMBOL": "NONE", "CODE": "NONE", "TIME_UNIT": 15, "ORDER_LOTS": 1,
+         "LOTS_MULTIPLE": 2.0, "MINIMUM_PROFIT": 67, "MAXIMUM_PRICE_SLIPPAGE": 3, "FIRST_TRAILING_STEP": 100, 
+         "OTHER_TRAILING_STEP": 50, "LIMIT_MAX_DEGREE": 10, "LOSS_CUT_PIPS": 800, "LOSS_CUT_DAYS": 300, 
+         "HOLD_DAYS_AFTER_LOSS_CUT": 30, "ALGORITHM_TYPE": "ALGO_DMI", "DMI_PERIOD": 12, "MACD_LONG_PERIOD": 26, 
+         "MACD_SHORT_PERIOD": 12, "MACD_SIGNAL_PERIOD": 9, "CCI_PERIOD": 14, "CCI_RANGE": 80, "CHECK_ADX_IND": true,
+         "CHECK_RSI_IND": true, "CHECK_LONG_EMA_IND": true, "CHECK_SHORT_EMA_IND": true, "ADX_ALLOW_LEVEL": 15, 
+         "LONG_MA_PERIOD": 200, "SHORT_MA_PERIOD": 3, "RSI_ALLOW_LEVEL": 50}''')
 
         self.real_mode = True
         self.magic_no = magic_no
@@ -165,10 +162,6 @@ class Martingale:
             if self.config['CHECK_SHORT_EMA_IND'] else 0
         maShortTrend = talib.MA(self.df_cur['Close'], self.config['SHORT_MA_PERIOD'])[-1] \
             if self.config['CHECK_SHORT_EMA_IND'] else 0
-        # envlUpper = iCustom(NULL, 0, "Envelopes", ENVELOPES_PERIOD, 0, MODE_EMA, PRICE_CLOSE, ENVELOPES_DEVIATION, 0, 1) \
-        #     if self.config['CHECK_ENVELOPES_IND'] else 0
-        # envlLower = iCustom(NULL, 0, "Envelopes", ENVELOPES_PERIOD, 0, MODE_EMA, PRICE_CLOSE, ENVELOPES_DEVIATION, 1, 1) \
-        #     if self.cofngi['CHECK_ENVELOPES_IND'] else 0
 
         bPass = True
 
@@ -199,15 +192,13 @@ class Martingale:
                 else:
                     return None
             # RSI가 50 이하에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi > 60:
+            if self.config['CHECK_RSI_IND'] and rsi > (100 - self.config['RSI_LEVEL']):
                 if self.debug_mode:
                     self.main.logging('■ checkOpen() : RSI - ' + str(rsi))
                     self.rsi_count += 1
                     bPass = False
                 else:
                     return None
-            # Envelopes Upper 이하에서 매수
-            # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] > envlUpper): return None
 
             if self.real_mode:
                 self.main.logging('■ checkOpen() : BUY ' + self.code)
@@ -229,15 +220,13 @@ class Martingale:
                 else:
                     return None
             # RSI가 50 이상에서 매수
-            if self.config['CHECK_RSI_IND'] and rsi < 40:
+            if self.config['CHECK_RSI_IND'] and rsi < self.config['RSI_LEVEL']:
                 if self.debug_mode:
                     self.main.logging('■ checkOpen() : RSI - ' + str(rsi))
                     self.rsi_count += 1
                     bPass = False
                 else:
                     return None
-            # Envelopes Lower이상에서 매도
-            # if (self.config['CHECK_ENVELOPES_IND'] and self.df_cur['Close'][-1] < envlLower): return None
 
             if self.real_mode:
                 self.main.logging('■ checkOpen() : SELL ' + self.code)
